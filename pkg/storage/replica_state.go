@@ -122,13 +122,13 @@ func saveState(
 
 func loadLease(
 	ctx context.Context, reader engine.Reader, rangeID roachpb.RangeID,
-) (*roachpb.Lease, error) {
-	lease := &roachpb.Lease{}
+) (roachpb.Lease, error) {
+	lease := roachpb.Lease{}
 	_, err := engine.MVCCGetProto(ctx, reader,
 		keys.RangeLeaseKey(rangeID), hlc.ZeroTimestamp,
-		true, nil, lease)
+		true, nil, &lease)
 	if err != nil {
-		return nil, err
+		return roachpb.Lease{}, err
 	}
 	return lease, nil
 }
@@ -138,15 +138,12 @@ func setLease(
 	eng engine.ReadWriter,
 	ms *enginepb.MVCCStats,
 	rangeID roachpb.RangeID,
-	lease *roachpb.Lease,
+	lease roachpb.Lease,
 ) error {
-	if lease == nil {
-		return errors.New("cannot persist nil Lease")
-	}
 	return engine.MVCCPutProto(
 		ctx, eng, ms,
 		keys.RangeLeaseKey(rangeID),
-		hlc.ZeroTimestamp, nil, lease)
+		hlc.ZeroTimestamp, nil, &lease)
 }
 
 // loadAppliedIndex returns the Raft applied index and the lease applied index.
@@ -477,7 +474,7 @@ func writeInitialState(
 	ms enginepb.MVCCStats,
 	desc roachpb.RangeDescriptor,
 	oldHS raftpb.HardState,
-	lease *roachpb.Lease,
+	lease roachpb.Lease,
 ) (enginepb.MVCCStats, error) {
 	var s storagebase.ReplicaState
 
@@ -495,7 +492,7 @@ func writeInitialState(
 
 	if existingLease, err := loadLease(ctx, eng, desc.RangeID); err != nil {
 		return enginepb.MVCCStats{}, errors.Wrap(err, "error reading lease")
-	} else if (existingLease != nil && *existingLease != roachpb.Lease{}) {
+	} else if !existingLease.Empty() {
 		log.Fatalf(ctx, "expected trivial lease, but found %+v", existingLease)
 	}
 

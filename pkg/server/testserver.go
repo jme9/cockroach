@@ -195,6 +195,14 @@ func (ts *TestServer) Gossip() *gossip.Gossip {
 	return nil
 }
 
+// NodeLiveness returns the liveness instance used by the TestServer.
+func (ts *TestServer) NodeLiveness() *storage.NodeLiveness {
+	if ts != nil {
+		return ts.nodeLiveness
+	}
+	return nil
+}
+
 // Clock returns the clock used by the TestServer.
 func (ts *TestServer) Clock() *hlc.Clock {
 	if ts != nil {

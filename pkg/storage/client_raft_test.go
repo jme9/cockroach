@@ -40,6 +40,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/storage/engine"
 	"github.com/cockroachdb/cockroach/pkg/storage/storagebase"
 	"github.com/cockroachdb/cockroach/pkg/testutils"
+	"github.com/cockroachdb/cockroach/pkg/testutils/gossiputil"
 	"github.com/cockroachdb/cockroach/pkg/util"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
@@ -1003,50 +1004,33 @@ func TestStoreRangeDownReplicate(t *testing.T) {
 	desc := replica.Desc()
 	mtc.replicateRange(desc.RangeID, 3, 4)
 
-	maxTimeout := time.After(10 * time.Second)
-	succeeded := false
-	i := 0
-	for !succeeded {
-		select {
-		case <-maxTimeout:
-			t.Fatalf("Failed to achieve proper replication within 10 seconds")
-		case <-time.After(10 * time.Millisecond):
-			rangeDesc := getRangeMetadata(rightKeyAddr, mtc, t)
-			if count := len(rangeDesc.Replicas); count < 3 {
-				t.Fatalf("Removed too many replicas; expected at least 3 replicas, found %d", count)
-			} else if count == 3 {
-				succeeded = true
-				break
-			}
-
-			// Cycle the lease to the next replica (on the next store) if that
-			// replica still exists. This avoids the condition in which we try
-			// to continuously remove the replica on a store when
-			// down-replicating while it also still holds the lease.
-			for {
-				i++
-				if i >= len(mtc.stores) {
-					i = 0
-				}
-				rep := mtc.stores[i].LookupReplica(rightKeyAddr, nil)
-				if rep != nil {
-					mtc.expireLeases()
-					// Force the read command request a new lease.
-					getArgs := getArgs(rightKey)
-					if _, err := client.SendWrapped(context.Background(), mtc.distSenders[i], &getArgs); err != nil {
-						t.Fatal(err)
-					}
-					mtc.stores[i].ForceReplicationScanAndProcess()
-					break
-				}
-			}
+	// Initialize the gossip network.
+	storeDescs := make([]*roachpb.StoreDescriptor, 0, len(mtc.stores))
+	for _, s := range mtc.stores {
+		desc, err := s.Descriptor()
+		if err != nil {
+			t.Fatal(err)
 		}
+		storeDescs = append(storeDescs, desc)
+	}
+	for _, g := range mtc.gossips {
+		gossiputil.NewStoreGossiper(g).GossipStores(storeDescs, t)
 	}
 
-	// Expire range leases one more time, so that any remaining resolutions can
-	// get a range lease.
-	// TODO(bdarnell): understand why some tests need this.
-	mtc.expireLeases()
+	util.SucceedsSoon(t, func() error {
+		rangeDesc := getRangeMetadata(rightKeyAddr, mtc, t)
+		if count := len(rangeDesc.Replicas); count < 3 {
+			t.Fatalf("Removed too many replicas; expected at least 3 replicas, found %d", count)
+		} else if count == 3 {
+			return nil
+		}
+		// Force scan & replication queue for each store to make sure the
+		// lease holder is given ample opportunity to down-replicate.
+		for i := 0; i < len(mtc.stores); i++ {
+			mtc.stores[i].ForceReplicationScanAndProcess()
+		}
+		return errors.Errorf("range has > 3 replicas: %+v", rangeDesc)
+	})
 }
 
 // TestChangeReplicasDescriptorInvariant tests that a replica change aborts if

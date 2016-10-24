@@ -981,7 +981,6 @@ func runSetupSplitSnapshotRace(
 	// 3 is already stopped.
 	mtc.stopStore(4)
 	mtc.stopStore(5)
-	mtc.expireLeases()
 
 	testFn(mtc, leftKey, rightKey)
 }
@@ -1004,6 +1003,8 @@ func TestSplitSnapshotRace_SplitWins(t *testing.T) {
 			t.Fatal(pErr)
 		}
 		mtc.waitForValues(leftKey, []int64{0, 11, 11, 11, 0, 0})
+		mtc.mu.Lock()
+		mtc.mu.Unlock()
 
 		// Now wake the other stores up.
 		mtc.restartStore(4)
